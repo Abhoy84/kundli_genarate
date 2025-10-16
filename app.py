@@ -115,7 +115,7 @@ def curved_house_path(cx, cy, size, rotation=0.0, bulge=0.35):
 # -----------------------------
 # Draw North-Indian Kundli with curved shapes (style #4)
 # -----------------------------
-def draw_connected_north_kundli_bright(name, ascendant_deg, planets_dict, info_text=""):
+def draw_connected_north_kundli(name, ascendant_deg, planets_dict, info_text=""):
     """
     Draws a North-Indian Kundli that matches the bright cream/orange/red sample geometry.
     Planet labels are formatted like: "Ve 12:18 Has" (short planet, deg:min, nakshatra short).
