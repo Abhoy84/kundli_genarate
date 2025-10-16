@@ -1,6 +1,7 @@
 # app.py
 from flask import Flask, request, jsonify, send_file
 import swisseph as swe
+from flask_cors import CORS  
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from timezonefinder import TimezoneFinder
