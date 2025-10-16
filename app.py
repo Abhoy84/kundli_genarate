@@ -1,9 +1,10 @@
 # app.py
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import swisseph as swe
-from flask_cors import CORS  
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon, PathPatch
+from matplotlib.path import Path
 from timezonefinder import TimezoneFinder
 from datetime import datetime
 import pytz
@@ -17,6 +18,7 @@ import math
 import numpy as np
 
 app = Flask(__name__)
+CORS(app)
 
 # -----------------------------
 # Geocoding helpers
@@ -37,7 +39,6 @@ def geocode_nominatim(place, retries=3, timeout=10):
     return None
 
 def get_location(place):
-    # Keep it simple: Nominatim fallback only; you may plug in Geoapify here if you want.
     return geocode_nominatim(place)
 
 # -----------------------------
@@ -53,156 +54,228 @@ def safe_calc_longitude(jd_ut, planet_code):
         return None
 
 # -----------------------------
-# Utility: create diamond polygon (4 points) centered at (cx,cy)
+# Curved house shape helper (Bezier)
 # -----------------------------
-def diamond_polygon(cx, cy, size, rotation=0.0):
-    # diamond points (up, right, down, left) then rotate
+def curved_house_path(cx, cy, size, rotation=0.0, bulge=0.35):
+    """
+    Create a Path (closed) representing a curved diamond-like house centered at (cx,cy).
+    `size` controls radius; `rotation` rotates the shape; `bulge` controls curvature (0..0.6)
+    """
+    # Basic diamond control points (top, right, bottom, left)
     pts = np.array([
         [0.0, size],
         [size, 0.0],
         [0.0, -size],
         [-size, 0.0],
     ])
+    # Apply rotation
     c, s = math.cos(rotation), math.sin(rotation)
     R = np.array([[c, -s], [s, c]])
-    rotated = pts.dot(R.T) + np.array([cx, cy])
-    return rotated.tolist()
+    pts = pts.dot(R.T) + np.array([cx, cy])
+
+    # Build a cubic Bezier closed path using intermediate control points to bulge edges outward
+    # For each edge from P[i] to P[i+1], create one control point near the midpoint offset outward
+    verts = []
+    codes = []
+
+    n = len(pts)
+    for i in range(n):
+        p0 = pts[i]
+        p1 = pts[(i+1) % n]
+        # midpoint
+        mid = 0.5 * (p0 + p1)
+        # outward normal (pointing away from center (cx,cy))
+        center = np.array([cx, cy])
+        out_dir = mid - center
+        norm = np.linalg.norm(out_dir)
+        if norm == 0:
+            out = np.array([0.0, 0.0])
+        else:
+            out = (out_dir / norm) * (size * bulge)
+        # two control points for cubic: cp1 near p0 toward midpoint+out, cp2 near p1 toward midpoint+out
+        cp1 = p0 + 0.35 * (mid + out - p0)
+        cp2 = p1 + 0.35 * (mid + out - p1)
+
+        if i == 0:
+            # move to first point
+            verts.append(tuple(p0))
+            codes.append(Path.MOVETO)
+
+        # add cubic curve (cp1, cp2, p1)
+        verts.append(tuple(cp1))
+        codes.append(Path.CURVE4)
+        verts.append(tuple(cp2))
+        codes.append(Path.CURVE4)
+        verts.append(tuple(p1))
+        codes.append(Path.CURVE4)
+
+    path = Path(verts, codes)
+    return path
 
 # -----------------------------
-# Draw connected North-Indian Kundli chart
+# Draw North-Indian Kundli with curved shapes (style #4)
 # -----------------------------
-def draw_connected_north_kundli(name, ascendant_deg, planets_dict):
-    # Colors requested
-    bg_color = "#0b0b1a"       # blacky purple background
-    line_color = "#8e44ad"     # bluish-purple lines
-    planet_color = "#ffffff"   # white planet names
-    rashi_color = "#8b5a2b"    # brown rashi numbers
-    title_color = "#9b59b6"    # light purple
+def draw_connected_north_kundli(name, ascendant_deg, planets_dict, info_text=""):
+    # Theme colors
+    bg_color = "#070014"      # deep purple/black
+    outer_line = "#ff9f1c"    # warm orange for shiny border
+    inner_line = "#d78cff"    # purple accent
+    inner_fill = "#12001a"    # slightly lighter inner fill
+    text_color = "#ffffff"
+    rashi_color = "#e9d7ff"
+    asc_color = "#ffd86b"
+    footer_color = "#d6c9ff"
 
-    fig, ax = plt.subplots(figsize=(8,8))
+    fig, ax = plt.subplots(figsize=(8,8), dpi=150)
     fig.patch.set_facecolor(bg_color)
     ax.set_facecolor(bg_color)
     ax.axis("off")
 
-    # Geometry - connected diamond grid (approximate, tuned visually)
-    # Outer big diamonds centers
-    outer_radius = 0.60
+    # Positions roughly matching the reference curved-kundli
+    outer_radius = 0.62
     inner_radius = 0.30
-    big_size = 0.28    # size for outer corner diamonds
-    small_size = 0.18  # size for inner diamonds
+    big_size = 0.30
+    small_size = 0.18
 
-    # We'll put diamonds in these 12 logical slots (physical positions):
-    # Slot order (physical): 1 top, 2 top-left, 3 left, 4 bottom-left, 5 bottom, 6 bottom-right,
-    # 7 right, 8 top-right, 9 center-top (small), 10 center-right, 11 center-bottom, 12 center-left
     slot_centers = {
-        1: (0.0,  outer_radius),        # top
-        2: (-inner_radius,  inner_radius), # top-left inner
-        3: (-outer_radius,  0.0),       # left
-        4: (-inner_radius, -inner_radius), # bottom-left inner
-        5: (0.0, -outer_radius),        # bottom
-        6: ( inner_radius, -inner_radius), # bottom-right inner
-        7: ( outer_radius,  0.0),       # right
-        8: ( inner_radius,  inner_radius),  # top-right inner
-        9: (0.0,  inner_radius*0.38),   # center-top (small)
-        10:( inner_radius*0.38, 0.0),   # center-right
-        11:(0.0, -inner_radius*0.38),   # center-bottom
-        12:(-inner_radius*0.38, 0.0),   # center-left
+        1: (0.0,  outer_radius),
+        2: (-inner_radius,  inner_radius),
+        3: (-outer_radius,  0.0),
+        4: (-inner_radius, -inner_radius),
+        5: (0.0, -outer_radius),
+        6: ( inner_radius, -inner_radius),
+        7: ( outer_radius,  0.0),
+        8: ( inner_radius,  inner_radius),
+        9: (0.0,  inner_radius*0.36),
+        10:( inner_radius*0.36, 0.0),
+        11:(0.0, -inner_radius*0.36),
+        12:(-inner_radius*0.36, 0.0),
     }
 
-    # Diamonds sizes: outer corner ones bigger to match connected look
     slot_size = {}
     for s in range(1,13):
-        if s in (1,3,5,7):    # top, left, bottom, right - bigger outer diamonds
+        if s in (1,3,5,7):
             slot_size[s] = big_size
-        elif s in (2,4,6,8):  # inner corner diamonds
+        elif s in (2,4,6,8):
             slot_size[s] = small_size
-        else:                 # central small diamonds
+        else:
             slot_size[s] = small_size * 0.9
 
-    # Rotation so diamond points towards center: compute angle to center
-    slot_rotation = {}
-    for s, (cx,cy) in slot_centers.items():
-        slot_rotation[s] = math.atan2(-cy, -cx)  # point inward
-
-    # Draw the diamonds (polygons) with an inner border to create the connected look
+    # Draw the curved house shapes
     for s in range(1,13):
         cx, cy = slot_centers[s]
         size = slot_size[s]
-        rot = slot_rotation[s]
-        pts = diamond_polygon(cx, cy, size, rot)
-        poly = Polygon(pts, closed=True, edgecolor=line_color, facecolor=bg_color, linewidth=2.6)
-        ax.add_patch(poly)
-        # inner thin border for the "double-line" look
-        inner_pts = diamond_polygon(cx, cy, size*0.86, rot)
-        poly2 = Polygon(inner_pts, closed=True, edgecolor=line_color, facecolor=bg_color, linewidth=1.2)
-        ax.add_patch(poly2)
+        # set rotation so tip points inward
+        rot = math.atan2(-cy, -cx)
+        path = curved_house_path(cx, cy, size, rotation=rot, bulge=0.36 if s in (1,3,5,7) else 0.30)
+        patch = PathPatch(path, facecolor=inner_fill, edgecolor=inner_line, linewidth=2.2, zorder=2)
+        ax.add_patch(patch)
+        # Outer glossy stroke (slightly offset stroke for that shiny orange border look)
+        patch_outer = PathPatch(path, facecolor="none", edgecolor=outer_line, linewidth=4.0, alpha=0.95, zorder=1)
+        ax.add_patch(patch_outer)
 
-    # Add the cross lines to ensure it visually matches connected grid
-    ax.plot([-0.9, 0.9], [0,0], color=line_color, lw=1.6, alpha=0.95)
-    ax.plot([0,0], [-0.9,0.9], color=line_color, lw=1.6, alpha=0.95)
-    ax.plot([-0.7, 0.7], [0.7, -0.7], color=line_color, lw=1.2, alpha=0.95)
-    ax.plot([-0.7, 0.7], [-0.7, 0.7], color=line_color, lw=1.2, alpha=0.95)
+    # Decorative thick rounded frame (four arcs) to emulate reference border
+    # left-right top-bottom arcs using bezier approximations via Path
+    frame_pad = 0.96
+    # Top arc (left to right)
+    top_path = Path([
+        (-frame_pad, 0.88),
+        (-0.2, 1.08),
+        (0.2, 1.08),
+        (frame_pad, 0.88)
+    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
+    top_patch = PathPatch(top_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
+    ax.add_patch(top_patch)
+    # Bottom arc
+    bot_path = Path([
+        (-frame_pad, -0.88),
+        (-0.2, -1.08),
+        (0.2, -1.08),
+        (frame_pad, -0.88)
+    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
+    bot_patch = PathPatch(bot_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
+    ax.add_patch(bot_patch)
+    # Left vertical arc
+    left_path = Path([
+        (-0.88, frame_pad),
+        (-1.08, 0.2),
+        (-1.08, -0.2),
+        (-0.88, -frame_pad)
+    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
+    left_patch = PathPatch(left_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
+    ax.add_patch(left_patch)
+    # Right vertical arc
+    right_path = Path([
+        (0.88, frame_pad),
+        (1.08, 0.2),
+        (1.08, -0.2),
+        (0.88, -frame_pad)
+    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
+    right_patch = PathPatch(right_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
+    ax.add_patch(right_patch)
 
-    # Compute ascendant sign number (1..12) where Aries=1 ... Pisces=12
+    # Cross-connection lines (thin)
+    ax.plot([-0.86, 0.86], [0,0], color=inner_line, lw=1.2, alpha=0.9, zorder=3)
+    ax.plot([0,0], [-0.86,0.86], color=inner_line, lw=1.2, alpha=0.9, zorder=3)
+    ax.plot([-0.66, 0.66], [0.66, -0.66], color=inner_line, lw=1.0, alpha=0.9, zorder=3)
+    ax.plot([-0.66, 0.66], [-0.66, 0.66], color=inner_line, lw=1.0, alpha=0.9, zorder=3)
+
+    # Determine ascendant sign and map slots to rashi numbers
     asc_sign = int(ascendant_deg // 30) + 1
-
-    # Map physical slot -> sign number (rashi) using anticlockwise order starting from slot 1 (top)
-    # slot 1 gets asc_sign, slot 2 gets asc_sign+1, etc.
     slot_sign = {}
     for slot in range(1,13):
         slot_sign[slot] = ((asc_sign + (slot - 1) - 1) % 12) + 1
 
-    # Place Rashi number inside each diamond (brown)
+    # Draw rashi numbers in each curved house
     for slot, (cx, cy) in slot_centers.items():
-        # Slight upward offset for top text placement
         y_off = slot_size[slot] * 0.22
         ax.text(cx, cy + y_off, str(slot_sign[slot]),
-                color=rashi_color, fontsize=18, weight='bold', ha='center', va='center', family='sans-serif')
+                color=rashi_color, fontsize=18, weight='bold', ha='center', va='center', family='sans-serif', zorder=6)
 
-    # Prepare planets per slot based on their sign
+    # Prepare planets per slot
     slot_planets = {s: [] for s in range(1,13)}
     for pname, lon in planets_dict.items():
         if lon is None:
             continue
         sign_of_planet = int(lon // 30) + 1
-        # find slot with that sign (we built slot_sign map)
-        target_slot = None
-        for s, signn in slot_sign.items():
-            if signn == sign_of_planet:
-                target_slot = s
-                break
+        target_slot = next((s for s, signn in slot_sign.items() if signn == sign_of_planet), None)
         if target_slot is None:
             continue
         deg_in_sign = lon % 30
-        # Use short names for common planets (optional)
-        short = pname
-        # label: name and degree
-        label = f"{short} {deg_in_sign:.1f}°"
+        label = f"{pname} {deg_in_sign:.1f}°"
         slot_planets[target_slot].append(label)
 
-    # Render planet texts inside diamonds, stacked. Use white color.
+    # Render planet labels inside houses
     for slot, labels in slot_planets.items():
         if not labels:
             continue
         cx, cy = slot_centers[slot]
-        # start below the rashi number
-        start_y = cy - slot_size[slot]*0.06
-        line_spacing = 0.08 if len(labels) == 1 else 0.085
+        start_y = cy - slot_size[slot]*0.05
+        spacing = 0.085 if len(labels) <= 2 else 0.075
         for i, txt in enumerate(labels):
-            y = start_y - i * line_spacing
-            # smaller font for multiple planets
-            fontsize = 10 if len(labels) <= 2 else 9
-            ax.text(cx, y, txt, color=planet_color, fontsize=fontsize, ha='center', va='center', family='sans-serif')
+            y = start_y - i * spacing
+            fs = 11 if len(labels) <= 2 else 9
+            ax.text(cx, y, txt, color=text_color, fontsize=fs, ha='center', va='center', family='sans-serif', zorder=8)
 
-    # Title
-    ax.set_title(f"Kundli — {name}", color=title_color, pad=18, fontsize=20, weight='bold')
+    # Mark Ascendant prominently
+    asc_slot = next((s for s, signn in slot_sign.items() if signn == asc_sign), None)
+    if asc_slot:
+        acx, acy = slot_centers[asc_slot]
+        ax.text(acx, acy - slot_size[asc_slot]*0.45, "As", color=asc_color, fontsize=14, weight='bold', ha='center', va='center', zorder=9)
 
-    # Layout limits to nicely crop
-    ax.set_xlim(-1.05, 1.05)
-    ax.set_ylim(-1.05, 1.05)
+    # Title and name
+    ax.text(0, 0.98, "Janma Kundli", color="#f5e9ff", fontsize=22, weight='bold', ha='center', va='center', zorder=10)
+    ax.text(0, 0.92, name, color="#f0e0ff", fontsize=14, ha='center', va='center', zorder=10)
+
+    # Footer info
+    footer = info_text if info_text else "Generated by AstroApp"
+    ax.text(0, -0.98, footer, color=footer_color, fontsize=9, ha='center', va='center', alpha=0.95, zorder=10)
+
+    # Final layout
+    ax.set_xlim(-1.12, 1.12)
+    ax.set_ylim(-1.12, 1.12)
     ax.set_aspect('equal', 'box')
 
-    # Save to buffer
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
     plt.close(fig)
@@ -220,32 +293,29 @@ def generate_kundli():
             return jsonify({"error": "Missing JSON body"}), 400
 
         name = data.get("name", "Unknown")
-        dob = data.get("dob")   # e.g., "22 Oct 2003"
-        tob = data.get("tob")   # e.g., "08:05 PM"
+        dob = data.get("dob")
+        tob = data.get("tob")
         place = data.get("place")
 
         if not dob or not tob or not place:
             return jsonify({"error": "Please provide dob, tob and place fields"}), 400
 
-        # 1) Geocode
         loc = get_location(place)
         if not loc:
-            return jsonify({"error": "Could not geocode the place. Try again or set GEOAPIFY_KEY."}), 400
+            return jsonify({"error": "Could not geocode the place."}), 400
 
         lat = float(loc["lat"])
         lon = float(loc["lon"])
         display_name = loc.get("display_name", place)
         app.logger.info(f"Resolved place => {display_name} ({lat:.6f},{lon:.6f})")
 
-        # 2) Timezone
         tf = TimezoneFinder()
         tzname = tf.timezone_at(lng=lon, lat=lat)
         if not tzname:
-            return jsonify({"error": "Could not determine timezone for the given place"}), 400
+            return jsonify({"error": "Could not determine timezone"}), 400
         tz = pytz.timezone(tzname)
-        app.logger.info(f"Timezone: {tzname}")
 
-        # 3) Parse datetime
+        # parse datetime
         dt = None
         parse_attempts = [
             "%d %b %Y %I:%M %p",
@@ -263,42 +333,26 @@ def generate_kundli():
         if dt is None:
             return jsonify({"error": f"Could not parse date/time: '{combined}'"}), 400
 
-        # Localize and convert to UTC
         local_dt = tz.localize(dt)
         utc_dt = local_dt.astimezone(pytz.utc)
-        app.logger.info(f"Local datetime: {local_dt.isoformat()} UTC: {utc_dt.isoformat()}")
 
-        # 4) Julian Day UT
         jd_ut = swe.julday(
             utc_dt.year, utc_dt.month, utc_dt.day,
             utc_dt.hour + utc_dt.minute / 60.0 + utc_dt.second / 3600.0
         )
-        app.logger.info(f"Julian Day UT: {jd_ut}")
 
-        # 5) Calculate Ascendant & Planets
         try:
             cusps, ascmc = swe.houses(jd_ut, lat, lon)
             ascendant = float(ascmc[0]) % 360.0
         except Exception:
-            try:
-                ascmc = swe.houses_ex(jd_ut, lat, lon, b'P')[1]
-                ascendant = float(ascmc[0]) % 360.0
-            except Exception as e:
-                app.logger.exception("Failed to compute ascendant/houses")
-                return jsonify({"error": "Failed to compute ascendant/houses", "detail": str(e)}), 500
+            ascmc = swe.houses_ex(jd_ut, lat, lon, b'P')[1]
+            ascendant = float(ascmc[0]) % 360.0
 
-        # Planet list to compute
         planet_codes = [
-            (swe.SUN, "Sun"),
-            (swe.MOON, "Moon"),
-            (swe.MERCURY, "Mercury"),
-            (swe.VENUS, "Venus"),
-            (swe.MARS, "Mars"),
-            (swe.JUPITER, "Jupiter"),
-            (swe.SATURN, "Saturn"),
-            (swe.URANUS, "Uranus"),
-            (swe.NEPTUNE, "Neptune"),
-            (swe.PLUTO, "Pluto"),
+            (swe.SUN, "Sun"), (swe.MOON, "Moon"), (swe.MERCURY, "Mercury"),
+            (swe.VENUS, "Venus"), (swe.MARS, "Mars"), (swe.JUPITER, "Jupiter"),
+            (swe.SATURN, "Saturn"), (swe.URANUS, "Uranus"),
+            (swe.NEPTUNE, "Neptune"), (swe.PLUTO, "Pluto"),
             (swe.TRUE_NODE, "Rahu"),
         ]
         planets = {}
@@ -306,8 +360,8 @@ def generate_kundli():
             lon_deg = safe_calc_longitude(jd_ut, code)
             planets[pname] = lon_deg
 
-        # 6) Draw connected North Indian Kundli chart
-        buf = draw_connected_north_kundli(name, ascendant, planets)
+        info_text = f"Generated by AstroApp • {display_name.split(',')[0]} • {local_dt.strftime('%d %b %Y, %I:%M %p %Z')}"
+        buf = draw_connected_north_kundli(name, ascendant, planets, info_text=info_text)
         return send_file(buf, mimetype='image/png')
 
     except Exception as e:
@@ -318,5 +372,4 @@ def generate_kundli():
 # Run Flask
 # -----------------------------
 if __name__ == "__main__":
-    # Note: set debug=False in production
     app.run(host="0.0.0.0", port=8000, debug=True)
