@@ -5,4 +5,5 @@ timezonefinder
 pytz
 requests
 geopy
+flask-cors
 gunicorn
