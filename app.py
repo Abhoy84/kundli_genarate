@@ -115,74 +115,70 @@ def curved_house_path(cx, cy, size, rotation=0.0, bulge=0.35):
 # -----------------------------
 # Draw North-Indian Kundli with curved shapes (style #4)
 # -----------------------------
-def draw_connected_north_kundli(name, ascendant_deg, planets_dict, info_text=""):
+def draw_connected_north_kundli_bright(name, ascendant_deg, planets_dict, info_text=""):
     """
-    Draws North-Indian Kundli in bright traditional style (cream background, red/orange borders).
+    Draws a North-Indian Kundli that matches the bright cream/orange/red sample geometry.
+    Planet labels are formatted like: "Ve 12:18 Has" (short planet, deg:min, nakshatra short).
+    Returns a BytesIO PNG (300 dpi).
     """
     import matplotlib.pyplot as plt
-    from matplotlib.patches import PathPatch
     from matplotlib.path import Path
+    from matplotlib.patches import PathPatch, FancyBboxPatch
     import numpy as np
     import math
     import io
 
-    # --- Color theme ---
-    bg_color = "#fff6d5"        # light cream background
-    outer_line = "#ff6a00"      # orange outline
-    inner_line = "#cc0000"      # deep red border
-    text_color = "#b30000"      # dark red for all text
-    rashi_color = "#b30000"     # same for numbers
-    asc_color = "#b30000"       # same color for ascendant label
-    footer_color = "#800000"
+    # --- Colors & fonts ---
+    BG = "#FFF7D9"         # cream background
+    ORANGE = "#ff6a00"     # outer orange stroke
+    RED = "#cc1a00"        # inner red stroke & text
+    DEEP = "#8b0000"       # footer darker red
+    PLANET_TEXT = RED
+    RASHI_TEXT = RED
+    ASC_TEXT = RED
 
-    fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
-    fig.patch.set_facecolor(bg_color)
-    ax.set_facecolor(bg_color)
+    fig, ax = plt.subplots(figsize=(8.5, 7.5), dpi=150)
+    fig.patch.set_facecolor(BG)
+    ax.set_facecolor(BG)
     ax.axis("off")
 
-    # ----------------------
-    # Geometry of 12 houses
-    # ----------------------
-    outer_radius = 1.0
-    inner_radius = 0.55
-    small_radius = 0.32
-
+    # ---------------------------
+    # Hardcoded geometry (matches sample)
+    # ---------------------------
+    # We'll create 12 curved diamond house shapes using consistent control points.
+    # Centers chosen to match the sample geometry visually.
     slot_centers = {
-        1: (0.0,  inner_radius),
-        2: (-small_radius,  small_radius),
-        3: (-inner_radius,  0.0),
-        4: (-small_radius, -small_radius),
-        5: (0.0, -inner_radius),
-        6: ( small_radius, -small_radius),
-        7: ( inner_radius,  0.0),
-        8: ( small_radius,  small_radius),
-        9: (0.0,  small_radius*0.38),
-        10:( small_radius*0.38, 0.0),
-        11:(0.0, -small_radius*0.38),
-        12:(-small_radius*0.38, 0.0),
+        1: (0.0,  0.70),
+        2: (-0.45, 0.45),
+        3: (-0.75, 0.0),
+        4: (-0.45, -0.45),
+        5: (0.0, -0.70),
+        6: (0.45, -0.45),
+        7: (0.75, 0.0),
+        8: (0.45, 0.45),
+        9: (0.0, 0.22),
+        10:(0.22, 0.0),
+        11:(0.0, -0.22),
+        12:(-0.22, 0.0),
     }
 
     slot_size = {
-        1: 0.33, 2: 0.25, 3: 0.33, 4: 0.25,
-        5: 0.33, 6: 0.25, 7: 0.33, 8: 0.25,
-        9: 0.20, 10: 0.20, 11: 0.20, 12: 0.20
+        1: 0.30, 2:0.22, 3:0.30, 4:0.22,
+        5:0.30, 6:0.22, 7:0.30, 8:0.22,
+        9:0.16, 10:0.16, 11:0.16, 12:0.16
     }
 
-    # ----------------------
-    # Helper to draw curved diamond path
-    # ----------------------
-    def curved_diamond(cx, cy, size, bulge=0.32, rotation=0):
-        pts = np.array([
-            [0, size],
-            [size, 0],
-            [0, -size],
-            [-size, 0]
-        ])
+    # A function that returns a smooth curved diamond Path centered at (cx,cy)
+    def curved_diamond_path(cx, cy, size, bulge=0.36, rotation=0.0):
+        # diamond base points (top,right,bottom,left) relative to center
+        pts = np.array([[0, size], [size, 0], [0, -size], [-size, 0]])
         # rotate
         c, s = math.cos(rotation), math.sin(rotation)
         R = np.array([[c, -s], [s, c]])
-        pts = pts @ R.T + np.array([cx, cy])
-        verts, codes = [], []
+        pts = (pts @ R.T) + np.array([cx, cy])
+
+        verts = []
+        codes = []
         n = len(pts)
         for i in range(n):
             p0 = pts[i]
@@ -192,87 +188,171 @@ def draw_connected_north_kundli(name, ascendant_deg, planets_dict, info_text="")
             out = mid - center
             norm = np.linalg.norm(out)
             if norm == 0:
-                outn = np.array([0, 0])
+                outn = np.array([0.0, 0.0])
             else:
                 outn = out / norm * (size * bulge)
-            cp1 = p0 + 0.35 * (mid + outn - p0)
-            cp2 = p1 + 0.35 * (mid + outn - p1)
+            # cubic control points toward midpoint+outn
+            cp1 = p0 + 0.36 * (mid + outn - p0)
+            cp2 = p1 + 0.36 * (mid + outn - p1)
             if i == 0:
-                verts.append(tuple(p0))
-                codes.append(Path.MOVETO)
+                verts.append(tuple(p0)); codes.append(Path.MOVETO)
             verts.append(tuple(cp1)); codes.append(Path.CURVE4)
             verts.append(tuple(cp2)); codes.append(Path.CURVE4)
             verts.append(tuple(p1)); codes.append(Path.CURVE4)
         return Path(verts, codes)
 
-    # ----------------------
-    # Draw all 12 houses
-    # ----------------------
+    # ---------------------------
+    # Draw dual border frame (outer orange + inner red) with rounded corners
+    # ---------------------------
+    # large FancyBboxPatch for rounded external border (orange) and inner red stroke
+    frame_pad = 1.06
+    bbox = FancyBboxPatch(
+        (-frame_pad, -0.95), 2*frame_pad, 1.9,
+        boxstyle="round,pad=0.25,rounding_size=0.35",
+        linewidth=9, edgecolor=ORANGE, facecolor=BG, zorder=0
+    )
+    ax.add_patch(bbox)
+    bbox2 = FancyBboxPatch(
+        (-frame_pad+0.02, -0.95+0.02), 2*(frame_pad-0.02), 1.9-0.04,
+        boxstyle="round,pad=0.20,rounding_size=0.31",
+        linewidth=4, edgecolor=RED, facecolor="none", zorder=1
+    )
+    ax.add_patch(bbox2)
+
+    # ---------------------------
+    # Draw houses (orange outer stroke + red inner stroke)
+    # ---------------------------
     for s in range(1, 13):
         cx, cy = slot_centers[s]
-        path = curved_diamond(cx, cy, slot_size[s], bulge=0.33)
-        # orange outer border
-        ax.add_patch(PathPatch(path, facecolor=bg_color, edgecolor=outer_line, lw=5, zorder=1))
-        # red inner border
-        ax.add_patch(PathPatch(path, facecolor=bg_color, edgecolor=inner_line, lw=1.5, zorder=2))
+        size = slot_size[s]
+        # rotate tips to point inward roughly
+        rot = math.atan2(-cy, -cx) if (cx != 0 or cy != 0) else 0.0
+        path = curved_diamond_path(cx, cy, size, bulge=0.36, rotation=rot)
+        # outer orange glossy stroke
+        p_outer = PathPatch(path, facecolor=BG, edgecolor=ORANGE, linewidth=6.0, zorder=2)
+        ax.add_patch(p_outer)
+        # inner red stroke
+        p_inner = PathPatch(path, facecolor=BG, edgecolor=RED, linewidth=1.8, zorder=3)
+        ax.add_patch(p_inner)
 
-    # ----------------------
-    # Cross lines inside
-    # ----------------------
-    ax.plot([-inner_radius, inner_radius], [0, 0], color=inner_line, lw=1.2)
-    ax.plot([0, 0], [-inner_radius, inner_radius], color=inner_line, lw=1.2)
-    ax.plot([-inner_radius * 0.7, inner_radius * 0.7], [inner_radius * 0.7, -inner_radius * 0.7], color=inner_line, lw=1.0)
-    ax.plot([-inner_radius * 0.7, inner_radius * 0.7], [-inner_radius * 0.7, inner_radius * 0.7], color=inner_line, lw=1.0)
+    # cross connecting lines (thin red) to form the inner X and plus like sample
+    ax.plot([-0.8, 0.8], [0, 0], color=RED, lw=1.6, zorder=4)
+    ax.plot([0, 0], [-0.8, 0.8], color=RED, lw=1.6, zorder=4)
+    ax.plot([-0.55, 0.55], [0.55, -0.55], color=RED, lw=1.2, zorder=4)
+    ax.plot([-0.55, 0.55], [-0.55, 0.55], color=RED, lw=1.2, zorder=4)
 
-    # ----------------------
-    # Map signs and planets
-    # ----------------------
+    # ---------------------------
+    # Map ascendant -> rashi numbers in north chart order
+    # ---------------------------
     asc_sign = int(ascendant_deg // 30) + 1
     slot_sign = {}
     for slot in range(1, 13):
-        slot_sign[slot] = ((asc_sign + slot - 1 - 1) % 12) + 1
+        # slot 1 gets asc_sign, slot 2 next sign, etc.
+        slot_sign[slot] = ((asc_sign + (slot - 1) - 1) % 12) + 1
 
-    # Sign numbers
+    # draw rashi numbers (bold red)
     for s, (cx, cy) in slot_centers.items():
-        ax.text(cx, cy + slot_size[s] * 0.2, str(slot_sign[s]),
-                color=rashi_color, fontsize=15, ha='center', va='center', fontweight='bold')
+        ax.text(cx, cy + slot_size[s] * 0.22, str(slot_sign[s]),
+                color=RASHI_TEXT, fontsize=18, fontweight='bold', ha='center', va='center', zorder=6)
 
-    # Planets by slot
-    slot_planets = {s: [] for s in range(1, 13)}
+    # ---------------------------
+    # Helpers for planet label formatting and nakshatra short names
+    # ---------------------------
+    planet_short = {
+        "Sun": "Su", "Moon":"Mo", "Mercury":"Me", "Venus":"Ve",
+        "Mars":"Ma", "Jupiter":"Ju", "Saturn":"Sa", "Rahu":"Ra",
+        "Ketu":"Ke", "Uranus":"Ur", "Neptune":"Ne", "Pluto":"Pl"
+    }
+
+    # Full nakshatra names (27), short 3-letter approximations used in many kundli prints.
+    nak_full = [
+        "Ashwini","Bharani","Krittika","Rohini","Mrigashira","Ardra","Punarvasu","Pushya","Ashlesha",
+        "Magha","Purva Phalguni","Uttara Phalguni","Hasta","Chitra","Swati","Vishakha","Anuradha",
+        "Jyeshtha","Mula","Purva Ashadha","Uttara Ashadha","Shravana","Dhanishta","Shatabhisha",
+        "Purva Bhadrapada","Uttara Bhadrapada","Revati"
+    ]
+    # 3-letter short forms chosen to match common printed abbreviations
+    nak_short = ["Ash","Bha","Kri","Roh","Mrg","Ard","Pun","Pus","Ash","Mag","Pph","Uph","Has","Chi","Swa","Vis","Anu","Jye","Mul","Paa","Uaa","Shr","Dha","Sha","Pbh","Ubh","Rev"]
+
+    def deg_min_str(deg_in_sign):
+        # deg_in_sign is 0..30 float
+        d = int(math.floor(deg_in_sign))
+        m = int(round((deg_in_sign - d) * 60))
+        # handle rounding up to 60
+        if m == 60:
+            d += 1
+            m = 0
+        return f"{d:02d}:{m:02d}"
+
+    def get_nak_short(lon):
+        # lon in degrees 0..360
+        lon_mod = lon % 360.0
+        idx = int(lon_mod / (360.0 / 27.0))  # 0..26
+        idx = max(0, min(26, idx))
+        return nak_short[idx]
+
+    # ---------------------------
+    # Place planets inside each house; left-aligned style similar to reference
+    # ---------------------------
+    # Build mapping of slot -> list of planet label strings
+    slot_planets = {s: [] for s in range(1,13)}
     for pname, lon in planets_dict.items():
         if lon is None:
             continue
         sign = int(lon // 30) + 1
-        target = next((s for s, val in slot_sign.items() if val == sign), None)
-        if target:
-            deg = lon % 30
-            slot_planets[target].append(f"{pname} {deg:.1f}°")
+        target_slot = next((s for s, signn in slot_sign.items() if signn == sign), None)
+        if target_slot is None:
+            continue
+        deg_in_sign = lon % 30
+        degmin = deg_min_str(deg_in_sign)
+        nak = get_nak_short(lon)
+        short = planet_short.get(pname, pname[:2])
+        label = f"{short} {degmin} {nak}"
+        slot_planets[target_slot].append(label)
 
-    for s, labels in slot_planets.items():
+    # small offset positions for left-aligned multi-line planet lists per slot (tweak for look)
+    for s in range(1,13):
+        labels = slot_planets[s]
         if not labels:
             continue
         cx, cy = slot_centers[s]
-        for i, txt in enumerate(labels):
-            ax.text(cx, cy - 0.07 * i, txt, color=text_color, fontsize=10,
-                    ha='center', va='center')
+        # choose alignment offsets to match printed style: left of center for many slots
+        # We'll offset horizontally depending on quadrant
+        if cx < -0.1:
+            ha = 'left'
+            x_off = cx - slot_size[s]*0.18
+        elif cx > 0.1:
+            ha = 'right'
+            x_off = cx + slot_size[s]*0.18
+        else:
+            ha = 'center'
+            x_off = cx
+        # vertical start
+        start_y = cy + slot_size[s] * 0.06
+        for i, lab in enumerate(labels):
+            y = start_y - i * 0.095
+            ax.text(x_off, y, lab, color=PLANET_TEXT, fontsize=10, ha=ha, va='center', zorder=8)
 
-    # Ascendant mark
+    # Ascendant mark prominent
     asc_slot = next((s for s, signn in slot_sign.items() if signn == asc_sign), None)
     if asc_slot:
         acx, acy = slot_centers[asc_slot]
-        ax.text(acx, acy, "As", color=asc_color, fontsize=13, fontweight='bold', ha='center', va='center')
+        ax.text(acx, acy - slot_size[asc_slot]*0.42, "As", color=ASC_TEXT, fontsize=14, fontweight='bold', ha='center', va='center', zorder=9)
 
-    # Title & footer
-    ax.text(0, 1.12, "Janma Kundli", color=inner_line, fontsize=20, weight='bold', ha='center')
-    ax.text(0, 1.05, name, color=inner_line, fontsize=12, ha='center')
-    ax.text(0, -1.10, info_text, color=footer_color, fontsize=9, ha='center')
+    # Title and name (top center)
+    ax.text(0, 0.94, "Janma Kundli", color=RED, fontsize=26, fontweight='bold', ha='center', va='center', zorder=10)
+    ax.text(0, 0.88, name, color=RED, fontsize=12, ha='center', va='center', zorder=10)
 
-    ax.set_xlim(-1.2, 1.2)
-    ax.set_ylim(-1.2, 1.2)
-    ax.set_aspect("equal", "box")
+    # Footer info (small)
+    ax.text(0, -0.95, info_text, color=DEEP, fontsize=9, ha='center', va='center', zorder=10)
 
+    ax.set_xlim(-1.12, 1.12)
+    ax.set_ylim(-1.05, 1.05)
+    ax.set_aspect('equal', 'box')
+
+    # Save to bytes buffer
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", facecolor=bg_color, dpi=300)
+    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
     plt.close(fig)
     buf.seek(0)
     return buf
