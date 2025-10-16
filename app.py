@@ -116,171 +116,169 @@ def curved_house_path(cx, cy, size, rotation=0.0, bulge=0.35):
 # Draw North-Indian Kundli with curved shapes (style #4)
 # -----------------------------
 def draw_connected_north_kundli(name, ascendant_deg, planets_dict, info_text=""):
-    # Theme colors
-    bg_color = "#070014"      # deep purple/black
-    outer_line = "#ff9f1c"    # warm orange for shiny border
-    inner_line = "#d78cff"    # purple accent
-    inner_fill = "#12001a"    # slightly lighter inner fill
-    text_color = "#ffffff"
-    rashi_color = "#e9d7ff"
-    asc_color = "#ffd86b"
-    footer_color = "#d6c9ff"
+    """
+    Draws North-Indian Kundli in bright traditional style (cream background, red/orange borders).
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import PathPatch
+    from matplotlib.path import Path
+    import numpy as np
+    import math
+    import io
 
-    fig, ax = plt.subplots(figsize=(8,8), dpi=150)
+    # --- Color theme ---
+    bg_color = "#fff6d5"        # light cream background
+    outer_line = "#ff6a00"      # orange outline
+    inner_line = "#cc0000"      # deep red border
+    text_color = "#b30000"      # dark red for all text
+    rashi_color = "#b30000"     # same for numbers
+    asc_color = "#b30000"       # same color for ascendant label
+    footer_color = "#800000"
+
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
     fig.patch.set_facecolor(bg_color)
     ax.set_facecolor(bg_color)
     ax.axis("off")
 
-    # Positions roughly matching the reference curved-kundli
-    outer_radius = 0.62
-    inner_radius = 0.30
-    big_size = 0.30
-    small_size = 0.18
+    # ----------------------
+    # Geometry of 12 houses
+    # ----------------------
+    outer_radius = 1.0
+    inner_radius = 0.55
+    small_radius = 0.32
 
     slot_centers = {
-        1: (0.0,  outer_radius),
-        2: (-inner_radius,  inner_radius),
-        3: (-outer_radius,  0.0),
-        4: (-inner_radius, -inner_radius),
-        5: (0.0, -outer_radius),
-        6: ( inner_radius, -inner_radius),
-        7: ( outer_radius,  0.0),
-        8: ( inner_radius,  inner_radius),
-        9: (0.0,  inner_radius*0.36),
-        10:( inner_radius*0.36, 0.0),
-        11:(0.0, -inner_radius*0.36),
-        12:(-inner_radius*0.36, 0.0),
+        1: (0.0,  inner_radius),
+        2: (-small_radius,  small_radius),
+        3: (-inner_radius,  0.0),
+        4: (-small_radius, -small_radius),
+        5: (0.0, -inner_radius),
+        6: ( small_radius, -small_radius),
+        7: ( inner_radius,  0.0),
+        8: ( small_radius,  small_radius),
+        9: (0.0,  small_radius*0.38),
+        10:( small_radius*0.38, 0.0),
+        11:(0.0, -small_radius*0.38),
+        12:(-small_radius*0.38, 0.0),
     }
 
-    slot_size = {}
-    for s in range(1,13):
-        if s in (1,3,5,7):
-            slot_size[s] = big_size
-        elif s in (2,4,6,8):
-            slot_size[s] = small_size
-        else:
-            slot_size[s] = small_size * 0.9
+    slot_size = {
+        1: 0.33, 2: 0.25, 3: 0.33, 4: 0.25,
+        5: 0.33, 6: 0.25, 7: 0.33, 8: 0.25,
+        9: 0.20, 10: 0.20, 11: 0.20, 12: 0.20
+    }
 
-    # Draw the curved house shapes
-    for s in range(1,13):
+    # ----------------------
+    # Helper to draw curved diamond path
+    # ----------------------
+    def curved_diamond(cx, cy, size, bulge=0.32, rotation=0):
+        pts = np.array([
+            [0, size],
+            [size, 0],
+            [0, -size],
+            [-size, 0]
+        ])
+        # rotate
+        c, s = math.cos(rotation), math.sin(rotation)
+        R = np.array([[c, -s], [s, c]])
+        pts = pts @ R.T + np.array([cx, cy])
+        verts, codes = [], []
+        n = len(pts)
+        for i in range(n):
+            p0 = pts[i]
+            p1 = pts[(i + 1) % n]
+            mid = 0.5 * (p0 + p1)
+            center = np.array([cx, cy])
+            out = mid - center
+            norm = np.linalg.norm(out)
+            if norm == 0:
+                outn = np.array([0, 0])
+            else:
+                outn = out / norm * (size * bulge)
+            cp1 = p0 + 0.35 * (mid + outn - p0)
+            cp2 = p1 + 0.35 * (mid + outn - p1)
+            if i == 0:
+                verts.append(tuple(p0))
+                codes.append(Path.MOVETO)
+            verts.append(tuple(cp1)); codes.append(Path.CURVE4)
+            verts.append(tuple(cp2)); codes.append(Path.CURVE4)
+            verts.append(tuple(p1)); codes.append(Path.CURVE4)
+        return Path(verts, codes)
+
+    # ----------------------
+    # Draw all 12 houses
+    # ----------------------
+    for s in range(1, 13):
         cx, cy = slot_centers[s]
-        size = slot_size[s]
-        # set rotation so tip points inward
-        rot = math.atan2(-cy, -cx)
-        path = curved_house_path(cx, cy, size, rotation=rot, bulge=0.36 if s in (1,3,5,7) else 0.30)
-        patch = PathPatch(path, facecolor=inner_fill, edgecolor=inner_line, linewidth=2.2, zorder=2)
-        ax.add_patch(patch)
-        # Outer glossy stroke (slightly offset stroke for that shiny orange border look)
-        patch_outer = PathPatch(path, facecolor="none", edgecolor=outer_line, linewidth=4.0, alpha=0.95, zorder=1)
-        ax.add_patch(patch_outer)
+        path = curved_diamond(cx, cy, slot_size[s], bulge=0.33)
+        # orange outer border
+        ax.add_patch(PathPatch(path, facecolor=bg_color, edgecolor=outer_line, lw=5, zorder=1))
+        # red inner border
+        ax.add_patch(PathPatch(path, facecolor=bg_color, edgecolor=inner_line, lw=1.5, zorder=2))
 
-    # Decorative thick rounded frame (four arcs) to emulate reference border
-    # left-right top-bottom arcs using bezier approximations via Path
-    frame_pad = 0.96
-    # Top arc (left to right)
-    top_path = Path([
-        (-frame_pad, 0.88),
-        (-0.2, 1.08),
-        (0.2, 1.08),
-        (frame_pad, 0.88)
-    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
-    top_patch = PathPatch(top_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
-    ax.add_patch(top_patch)
-    # Bottom arc
-    bot_path = Path([
-        (-frame_pad, -0.88),
-        (-0.2, -1.08),
-        (0.2, -1.08),
-        (frame_pad, -0.88)
-    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
-    bot_patch = PathPatch(bot_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
-    ax.add_patch(bot_patch)
-    # Left vertical arc
-    left_path = Path([
-        (-0.88, frame_pad),
-        (-1.08, 0.2),
-        (-1.08, -0.2),
-        (-0.88, -frame_pad)
-    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
-    left_patch = PathPatch(left_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
-    ax.add_patch(left_patch)
-    # Right vertical arc
-    right_path = Path([
-        (0.88, frame_pad),
-        (1.08, 0.2),
-        (1.08, -0.2),
-        (0.88, -frame_pad)
-    ], [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4])
-    right_patch = PathPatch(right_path, facecolor="none", edgecolor=outer_line, linewidth=6, zorder=0)
-    ax.add_patch(right_patch)
+    # ----------------------
+    # Cross lines inside
+    # ----------------------
+    ax.plot([-inner_radius, inner_radius], [0, 0], color=inner_line, lw=1.2)
+    ax.plot([0, 0], [-inner_radius, inner_radius], color=inner_line, lw=1.2)
+    ax.plot([-inner_radius * 0.7, inner_radius * 0.7], [inner_radius * 0.7, -inner_radius * 0.7], color=inner_line, lw=1.0)
+    ax.plot([-inner_radius * 0.7, inner_radius * 0.7], [-inner_radius * 0.7, inner_radius * 0.7], color=inner_line, lw=1.0)
 
-    # Cross-connection lines (thin)
-    ax.plot([-0.86, 0.86], [0,0], color=inner_line, lw=1.2, alpha=0.9, zorder=3)
-    ax.plot([0,0], [-0.86,0.86], color=inner_line, lw=1.2, alpha=0.9, zorder=3)
-    ax.plot([-0.66, 0.66], [0.66, -0.66], color=inner_line, lw=1.0, alpha=0.9, zorder=3)
-    ax.plot([-0.66, 0.66], [-0.66, 0.66], color=inner_line, lw=1.0, alpha=0.9, zorder=3)
-
-    # Determine ascendant sign and map slots to rashi numbers
+    # ----------------------
+    # Map signs and planets
+    # ----------------------
     asc_sign = int(ascendant_deg // 30) + 1
     slot_sign = {}
-    for slot in range(1,13):
-        slot_sign[slot] = ((asc_sign + (slot - 1) - 1) % 12) + 1
+    for slot in range(1, 13):
+        slot_sign[slot] = ((asc_sign + slot - 1 - 1) % 12) + 1
 
-    # Draw rashi numbers in each curved house
-    for slot, (cx, cy) in slot_centers.items():
-        y_off = slot_size[slot] * 0.22
-        ax.text(cx, cy + y_off, str(slot_sign[slot]),
-                color=rashi_color, fontsize=18, weight='bold', ha='center', va='center', family='sans-serif', zorder=6)
+    # Sign numbers
+    for s, (cx, cy) in slot_centers.items():
+        ax.text(cx, cy + slot_size[s] * 0.2, str(slot_sign[s]),
+                color=rashi_color, fontsize=15, ha='center', va='center', fontweight='bold')
 
-    # Prepare planets per slot
-    slot_planets = {s: [] for s in range(1,13)}
+    # Planets by slot
+    slot_planets = {s: [] for s in range(1, 13)}
     for pname, lon in planets_dict.items():
         if lon is None:
             continue
-        sign_of_planet = int(lon // 30) + 1
-        target_slot = next((s for s, signn in slot_sign.items() if signn == sign_of_planet), None)
-        if target_slot is None:
-            continue
-        deg_in_sign = lon % 30
-        label = f"{pname} {deg_in_sign:.1f}°"
-        slot_planets[target_slot].append(label)
+        sign = int(lon // 30) + 1
+        target = next((s for s, val in slot_sign.items() if val == sign), None)
+        if target:
+            deg = lon % 30
+            slot_planets[target].append(f"{pname} {deg:.1f}°")
 
-    # Render planet labels inside houses
-    for slot, labels in slot_planets.items():
+    for s, labels in slot_planets.items():
         if not labels:
             continue
-        cx, cy = slot_centers[slot]
-        start_y = cy - slot_size[slot]*0.05
-        spacing = 0.085 if len(labels) <= 2 else 0.075
+        cx, cy = slot_centers[s]
         for i, txt in enumerate(labels):
-            y = start_y - i * spacing
-            fs = 11 if len(labels) <= 2 else 9
-            ax.text(cx, y, txt, color=text_color, fontsize=fs, ha='center', va='center', family='sans-serif', zorder=8)
+            ax.text(cx, cy - 0.07 * i, txt, color=text_color, fontsize=10,
+                    ha='center', va='center')
 
-    # Mark Ascendant prominently
+    # Ascendant mark
     asc_slot = next((s for s, signn in slot_sign.items() if signn == asc_sign), None)
     if asc_slot:
         acx, acy = slot_centers[asc_slot]
-        ax.text(acx, acy - slot_size[asc_slot]*0.45, "As", color=asc_color, fontsize=14, weight='bold', ha='center', va='center', zorder=9)
+        ax.text(acx, acy, "As", color=asc_color, fontsize=13, fontweight='bold', ha='center', va='center')
 
-    # Title and name
-    ax.text(0, 0.98, "Janma Kundli", color="#f5e9ff", fontsize=22, weight='bold', ha='center', va='center', zorder=10)
-    ax.text(0, 0.92, name, color="#f0e0ff", fontsize=14, ha='center', va='center', zorder=10)
+    # Title & footer
+    ax.text(0, 1.12, "Janma Kundli", color=inner_line, fontsize=20, weight='bold', ha='center')
+    ax.text(0, 1.05, name, color=inner_line, fontsize=12, ha='center')
+    ax.text(0, -1.10, info_text, color=footer_color, fontsize=9, ha='center')
 
-    # Footer info
-    footer = info_text if info_text else "Generated by AstroApp"
-    ax.text(0, -0.98, footer, color=footer_color, fontsize=9, ha='center', va='center', alpha=0.95, zorder=10)
-
-    # Final layout
-    ax.set_xlim(-1.12, 1.12)
-    ax.set_ylim(-1.12, 1.12)
-    ax.set_aspect('equal', 'box')
+    ax.set_xlim(-1.2, 1.2)
+    ax.set_ylim(-1.2, 1.2)
+    ax.set_aspect("equal", "box")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=300)
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor=bg_color, dpi=300)
     plt.close(fig)
     buf.seek(0)
     return buf
+
+
+
 
 # -----------------------------
 # Generate Kundli Endpoint
